@@ -18,6 +18,10 @@ variable "address_subnet-space-ingress"{
   default = ["172.21.2.0/24"]
 }
 
+variable "ip_internal_appgateway"{
+  default = "172.21.2.4"
+}
+
 variable "name-rg-firewall"{
   default = "rg-AccesoRedNegocios"
 }

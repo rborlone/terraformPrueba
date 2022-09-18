@@ -1,6 +1,25 @@
+locals {
+  backend_address_pool_name             = "${azurerm_virtual_network.example-vnet.name}-beap"
+  frontend_port_name                    = "${azurerm_virtual_network.example-vnet.name}-feport"
+  frontend_ip_configuration_name        = "${azurerm_virtual_network.example-vnet.name}-feip"
+  frontend_privateip_configuration_name = "${azurerm_virtual_network.example-vnet.name}-fepip"
+  http_setting_name                     = "${azurerm_virtual_network.example-vnet.name}-be-htst"
+  listener_name                         = "${azurerm_virtual_network.example-vnet.name}-httplstn"
+  request_routing_rule_name             = "${azurerm_virtual_network.example-vnet.name}-rqrt"
+  redirect_configuration_name           = "${azurerm_virtual_network.example-vnet.name}-rdrcfg"
+}
+
 resource "azurerm_resource_group" "example" {
   name     = var.rg_name
   location = var.location
+}
+
+# User Assigned Idntities
+resource "azurerm_user_assigned_identity" "testIdentity" {
+  resource_group_name = azurerm_resource_group.example.name
+  location            = azurerm_resource_group.example.location
+
+  name = "identity1"
 }
 
 resource "azurerm_virtual_network" "example-vnet" {
@@ -10,36 +29,18 @@ resource "azurerm_virtual_network" "example-vnet" {
   location            = azurerm_resource_group.example.location
 }
 
-resource "azurerm_subnet" "example-subnet" {
-  name                 = "example-subnet"
+resource "azurerm_subnet" "subnet-aks" {
+  name                 = "subnet-aks"
   resource_group_name  = azurerm_resource_group.example.name
   virtual_network_name = azurerm_virtual_network.example-vnet.name
   address_prefixes     = var.address_subnet_space_aks
-
-  delegation {
-    name = "delegation"
-
-    service_delegation {
-      name    = "Microsoft.ContainerInstance/containerGroups"
-      actions = ["Microsoft.Network/virtualNetworks/subnets/join/action", "Microsoft.Network/virtualNetworks/subnets/prepareNetworkPolicies/action"]
-    }
-  }
 }
 
-resource "azurerm_subnet" "example-subnet-2" {
-  name                 = "example-subnet-2"
+resource "azurerm_subnet" "subnet-ingress" {
+  name                 = "subnet-ingress"
   resource_group_name  = azurerm_resource_group.example.name
   virtual_network_name = azurerm_virtual_network.example-vnet.name
   address_prefixes     = var.address_subnet-space-ingress
-
-  delegation {
-    name = "delegation"
-
-    service_delegation {
-      name    = "Microsoft.ContainerInstance/containerGroups"
-      actions = ["Microsoft.Network/virtualNetworks/subnets/join/action", "Microsoft.Network/virtualNetworks/subnets/prepareNetworkPolicies/action"]
-    }
-  }
 }
 
 resource "azurerm_virtual_network_peering" "example-peer-1" {
@@ -68,13 +69,95 @@ resource "azurerm_route_table" "example" {
     next_hop_type  = "VirtualAppliance"
     next_hop_in_ip_address = var.ip-internal-firewall
   }
-
-  tags = {
-    environment = "Production"
-  }
 }
 
-resource "azurerm_subnet_route_table_association" "example" {
-  subnet_id      = azurerm_subnet.example-subnet.id
+resource "azurerm_subnet_route_table_association" "urtassociateaks" {
+  subnet_id      = azurerm_subnet.subnet-aks.id
   route_table_id = azurerm_route_table.example.id
+}
+
+# resource "azurerm_subnet_route_table_association" "urtassociateingress" {
+#   subnet_id      = azurerm_subnet.subnet-ingress.id
+#   route_table_id = azurerm_route_table.example.id
+# }
+
+# Public Ip
+resource "azurerm_public_ip" "appgatewaypublicip" {
+  name                         = "publicIp1"
+  location                     = azurerm_resource_group.example.location
+  resource_group_name          = azurerm_resource_group.example.name
+  allocation_method            = "Static"
+  sku                          = "Standard"
+}
+
+resource "azurerm_application_gateway" "network" {
+  name                = "example-appgateway"
+  resource_group_name = azurerm_resource_group.example.name
+  location            = azurerm_resource_group.example.location
+
+  sku {
+    name     = "Standard_v2"
+    tier     = "Standard_v2"
+    capacity = 2
+  }
+
+  gateway_ip_configuration {
+    name      = "appGatewayIpConfig"
+    subnet_id = azurerm_subnet.subnet-ingress.id
+  }
+
+  frontend_port {
+    name = local.frontend_port_name
+    port = 80
+  }
+
+  frontend_port {
+    name = "httpsPort"
+    port = 443
+  }
+
+  frontend_ip_configuration {
+    name                 = local.frontend_ip_configuration_name
+    public_ip_address_id = azurerm_public_ip.appgatewaypublicip.id
+  }
+
+  frontend_ip_configuration {
+    name                 = "${local.frontend_ip_configuration_name}-private"
+    subnet_id = "${azurerm_subnet.subnet-ingress.id}"
+    private_ip_address_allocation = "Static"
+    private_ip_address = var.ip_internal_appgateway
+  }
+
+  backend_address_pool {
+    name = local.backend_address_pool_name
+  }
+
+  backend_http_settings {
+    name                  = local.http_setting_name
+    cookie_based_affinity = "Disabled"
+    port                  = 80
+    protocol              = "Http"
+    request_timeout       = 1
+  }
+
+  http_listener {
+    name                           = local.listener_name
+    frontend_ip_configuration_name = local.frontend_ip_configuration_name
+    frontend_port_name             = local.frontend_port_name
+    protocol                       = "Http"
+  }
+
+  request_routing_rule {
+    name                       = local.request_routing_rule_name
+    rule_type                  = "Basic"
+    http_listener_name         = local.listener_name
+    backend_address_pool_name  = local.backend_address_pool_name
+    backend_http_settings_name = local.http_setting_name
+    priority                   = 100
+  }
+
+  depends_on = [
+    azurerm_virtual_network.example-vnet,
+    azurerm_public_ip.appgatewaypublicip,
+  ]
 }
