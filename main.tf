@@ -2,50 +2,49 @@ locals {
   backend_address_pool_name             = "${azurerm_virtual_network.example-vnet.name}-beap"
   frontend_port_name                    = "${azurerm_virtual_network.example-vnet.name}-feport"
   frontend_ip_configuration_name        = "${azurerm_virtual_network.example-vnet.name}-feip"
-  frontend_privateip_configuration_name = "${azurerm_virtual_network.example-vnet.name}-fepip"
   http_setting_name                     = "${azurerm_virtual_network.example-vnet.name}-be-htst"
   listener_name                         = "${azurerm_virtual_network.example-vnet.name}-httplstn"
   request_routing_rule_name             = "${azurerm_virtual_network.example-vnet.name}-rqrt"
   redirect_configuration_name           = "${azurerm_virtual_network.example-vnet.name}-rdrcfg"
 }
 
-resource "azurerm_resource_group" "example" {
+resource "azurerm_resource_group" "rg" {
   name     = var.rg_name
   location = var.location
 }
 
 # User Assigned Idntities
 resource "azurerm_user_assigned_identity" "testIdentity" {
-  resource_group_name = azurerm_resource_group.example.name
-  location            = azurerm_resource_group.example.location
+  resource_group_name = azurerm_resource_group.rg.name
+  location            = azurerm_resource_group.rg.location
 
   name = "identity1"
 }
 
 resource "azurerm_virtual_network" "example-vnet" {
   name                = "example-vnet"
-  resource_group_name = azurerm_resource_group.example.name
+  resource_group_name = azurerm_resource_group.rg.name
   address_space       = var.address_space
-  location            = azurerm_resource_group.example.location
+  location            = azurerm_resource_group.rg.location
 }
 
 resource "azurerm_subnet" "subnet-aks" {
   name                 = "subnet-aks"
-  resource_group_name  = azurerm_resource_group.example.name
+  resource_group_name  = azurerm_resource_group.rg.name
   virtual_network_name = azurerm_virtual_network.example-vnet.name
   address_prefixes     = var.address_subnet_space_aks
 }
 
 resource "azurerm_subnet" "subnet-ingress" {
   name                 = "subnet-ingress"
-  resource_group_name  = azurerm_resource_group.example.name
+  resource_group_name  = azurerm_resource_group.rg.name
   virtual_network_name = azurerm_virtual_network.example-vnet.name
   address_prefixes     = var.address_subnet-space-ingress
 }
 
 resource "azurerm_virtual_network_peering" "example-peer-1" {
   name                      = "peer1to2"
-  resource_group_name       = azurerm_resource_group.example.name
+  resource_group_name       = azurerm_resource_group.rg.name
   virtual_network_name      = azurerm_virtual_network.example-vnet.name
   remote_virtual_network_id = var.id-vnet-firewall
 }
@@ -59,8 +58,8 @@ resource "azurerm_virtual_network_peering" "example-peer-2" {
 
 resource "azurerm_route_table" "example" {
   name                          = "example-route-table"
-  location                      = azurerm_resource_group.example.location
-  resource_group_name           = azurerm_resource_group.example.name
+  location                      = azurerm_resource_group.rg.location
+  resource_group_name           = azurerm_resource_group.rg.name
   disable_bgp_route_propagation = false
 
   route {
@@ -84,16 +83,16 @@ resource "azurerm_subnet_route_table_association" "urtassociateaks" {
 # Public Ip
 resource "azurerm_public_ip" "appgatewaypublicip" {
   name                         = "publicIp1"
-  location                     = azurerm_resource_group.example.location
-  resource_group_name          = azurerm_resource_group.example.name
+  location                     = azurerm_resource_group.rg.location
+  resource_group_name          = azurerm_resource_group.rg.name
   allocation_method            = "Static"
   sku                          = "Standard"
 }
 
 resource "azurerm_application_gateway" "network" {
   name                = "example-appgateway"
-  resource_group_name = azurerm_resource_group.example.name
-  location            = azurerm_resource_group.example.location
+  resource_group_name = azurerm_resource_group.rg.name
+  location            = azurerm_resource_group.rg.location
 
   sku {
     name     = "Standard_v2"
@@ -159,5 +158,40 @@ resource "azurerm_application_gateway" "network" {
   depends_on = [
     azurerm_virtual_network.example-vnet,
     azurerm_public_ip.appgatewaypublicip,
+  ]
+}
+
+resource "azurerm_role_assignment" "ra1" {
+  scope                = data.azurerm_subnet.kubesubnet.id
+  role_definition_name = "Network Contributor"
+  principal_id         = var.aks_service_principal_object_id
+
+  depends_on = [azurerm_virtual_network.test]
+}
+
+resource "azurerm_role_assignment" "ra2" {
+  scope                = azurerm_user_assigned_identity.testIdentity.id
+  role_definition_name = "Managed Identity Operator"
+  principal_id         = var.aks_service_principal_object_id
+  depends_on           = [azurerm_user_assigned_identity.testIdentity]
+}
+
+resource "azurerm_role_assignment" "ra3" {
+  scope                = azurerm_application_gateway.network.id
+  role_definition_name = "Contributor"
+  principal_id         = azurerm_user_assigned_identity.testIdentity.principal_id
+  depends_on = [
+    azurerm_user_assigned_identity.testIdentity,
+    azurerm_application_gateway.network,
+  ]
+}
+
+resource "azurerm_role_assignment" "ra4" {
+  scope                = data.azurerm_resource_group.rg.id
+  role_definition_name = "Reader"
+  principal_id         = azurerm_user_assigned_identity.testIdentity.principal_id
+  depends_on = [
+    azurerm_user_assigned_identity.testIdentity,
+    azurerm_application_gateway.network,
   ]
 }
