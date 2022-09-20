@@ -8,12 +8,13 @@ locals {
   redirect_configuration_name           = "${azurerm_virtual_network.example-vnet.name}-rdrcfg"
 }
 
+#Creación Grupo de Recurso
 resource "azurerm_resource_group" "rg" {
   name     = var.rg_name
   location = var.location
 }
 
-# User Assigned Idntities
+# Asignacion de Identidad de Usuario
 resource "azurerm_user_assigned_identity" "testIdentity" {
   resource_group_name = azurerm_resource_group.rg.name
   location            = azurerm_resource_group.rg.location
